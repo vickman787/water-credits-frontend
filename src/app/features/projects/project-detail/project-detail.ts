@@ -6,6 +6,7 @@ import { map, distinctUntilChanged, takeUntil } from 'rxjs/operators';
 import { NgIf, AsyncPipe } from '@angular/common';
 import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge';
 import { LoadingSpinnerComponent } from '../../../shared/components/loading-spinner/loading-spinner';
+import { LoadingStateComponent } from '../../../shared/components/loading-state/loading-state';
 import { CreditAmountPipe } from '../../../shared/pipes/credit-amount.pipe';
 import { DateFormatPipe } from '../../../shared/pipes/date-format.pipe';
 import { StellarAddressPipe } from '../../../shared/pipes/stellar-address.pipe';
@@ -15,13 +16,18 @@ import {
   TimeRange,
 } from '../../../shared/components/sensor-chart/sensor-parameter.model';
 import { SensorReading } from '../../../core/models/sensor-reading.model';
-import { SensorsService } from '../../../core/services/sensors.service';
 import { Project } from '../../../core/models/project.model';
 import * as ProjectsActions from '../../../core/store/projects/projects.actions';
 import {
   selectSelectedProject,
   selectProjectsLoading,
 } from '../../../core/store/projects/projects.selectors';
+import * as SensorsActions from '../../../core/store/sensors/sensors.actions';
+import {
+  selectLatestProjectReadings,
+  selectSensorsLoading,
+  selectSensorsError,
+} from '../../../core/store/sensors/sensors.selectors';
 import {
   LucideAngularModule,
   ArrowLeft,
@@ -60,6 +66,7 @@ type ProjectTab = 'overview' | 'sensors';
     StellarAddressPipe,
     LucideAngularModule,
     SensorChartComponent,
+    LoadingStateComponent,
   ],
   template: `
     <div *ngIf="loading$ | async" class="py-20">
@@ -227,34 +234,25 @@ type ProjectTab = 'overview' | 'sensors';
       <!-- Sensors Tab -->
       <ng-container *ngIf="activeTab === 'sensors'">
         <div class="space-y-6">
-          <div *ngIf="sensorLoading" class="flex items-center justify-center py-16">
-            <app-loading-spinner size="md" label="Loading sensor data..."></app-loading-spinner>
-          </div>
-
-          <ng-container *ngIf="!sensorLoading">
-            <div
-              *ngIf="projectSensorReadings.length === 0"
-              class="card p-10 text-center text-sm text-slate-400"
-            >
-              <lucide-angular
-                [img]="Droplets"
-                class="w-10 h-10 mx-auto mb-3 text-slate-300"
-              ></lucide-angular>
-              No sensor readings available for this project yet.
-            </div>
-
-            <ng-container *ngIf="projectSensorReadings.length > 0">
-              <app-sensor-chart
-                [title]="'Sensor Readings — ' + project.name"
-                [data]="projectSensorReadings"
-                [parameters]="projectSensorParams"
-                [timeRange]="projectSensorTimeRange"
-                [thresholds]="projectSensorThresholds"
-                (rangeChange)="onProjectSensorRangeChange($event)"
-                [height]="320"
-              />
-            </ng-container>
-          </ng-container>
+          <app-loading-state
+            [loading]="(sensorLoading$ | async) ?? false"
+            [error]="sensorError$ | async"
+            [empty]="((sensorReadings$ | async) ?? []).length === 0"
+            emptyTitle="No sensor readings"
+            emptyMessage="No sensor readings available for this project yet."
+            loadingLabel="Loading sensor data..."
+            (retry)="loadProjectSensorReadings()"
+          >
+            <app-sensor-chart
+              [title]="'Sensor Readings — ' + project.name"
+              [data]="(sensorReadings$ | async) ?? []"
+              [parameters]="projectSensorParams"
+              [timeRange]="projectSensorTimeRange"
+              [thresholds]="projectSensorThresholds"
+              (rangeChange)="onProjectSensorRangeChange($event)"
+              [height]="320"
+            />
+          </app-loading-state>
         </div>
       </ng-container>
     </ng-container>
@@ -264,14 +262,16 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   protected project: Project | null = null;
   protected loading$: Observable<boolean>;
   protected activeTab: ProjectTab = 'overview';
-  protected sensorLoading = false;
-  protected projectSensorReadings: SensorReading[] = [];
+  protected sensorReadings$: Observable<SensorReading[]>;
+  protected sensorLoading$: Observable<boolean>;
+  protected sensorError$: Observable<string | null>;
   protected projectSensorParams = PROJECT_SENSOR_PARAMS;
   protected projectSensorThresholds = PROJECT_SENSOR_THRESHOLDS;
   protected projectSensorTimeRange: TimeRange = '24h';
 
   private destroy$ = new Subject<void>();
   private projectId = '';
+  private sensorsRequested = false;
 
   protected readonly ArrowLeft = ArrowLeft;
   protected readonly MapPin = MapPin;
@@ -284,9 +284,11 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   constructor(
     private route: ActivatedRoute,
     private store: Store,
-    private sensorsService: SensorsService,
   ) {
     this.loading$ = this.store.select(selectProjectsLoading);
+    this.sensorReadings$ = this.store.select(selectLatestProjectReadings);
+    this.sensorLoading$ = this.store.select(selectSensorsLoading);
+    this.sensorError$ = this.store.select(selectSensorsError);
   }
 
   ngOnInit(): void {
@@ -308,6 +310,7 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
       )
       .subscribe((id) => {
         this.projectId = id;
+        this.sensorsRequested = false;
         if (id) {
           this.store.dispatch(ProjectsActions.loadProject({ id }));
         }
@@ -321,7 +324,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
 
   protected onSensorsTabClick(): void {
     this.activeTab = 'sensors';
-    if (this.projectSensorReadings.length === 0) {
+    if (!this.sensorsRequested) {
+      this.sensorsRequested = true;
       this.loadProjectSensorReadings();
     }
   }
@@ -331,16 +335,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     this.loadProjectSensorReadings();
   }
 
-  private async loadProjectSensorReadings(): Promise<void> {
+  protected loadProjectSensorReadings(): void {
     if (!this.projectId) return;
-    this.sensorLoading = true;
-    try {
-      const readings = await this.sensorsService.getLatestReadings(this.projectId);
-      this.projectSensorReadings = readings;
-    } catch {
-      this.projectSensorReadings = [];
-    } finally {
-      this.sensorLoading = false;
-    }
+    this.store.dispatch(SensorsActions.loadLatestReadings({ projectId: this.projectId }));
   }
 }

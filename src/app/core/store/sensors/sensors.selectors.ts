@@ -5,6 +5,10 @@ export const selectSensorsState = createFeatureSelector<SensorsState>('sensors')
 
 export const selectSensorDevices = createSelector(selectSensorsState, (state) => state.devices);
 export const selectSensorReadings = createSelector(selectSensorsState, (state) => state.readings);
+export const selectLatestProjectReadings = createSelector(
+  selectSensorsState,
+  (state) => state.latestReadings,
+);
 export const selectRecentReadings = createSelector(
   selectSensorsState,
   (state) => state.recentReadings,
