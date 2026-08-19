@@ -10,6 +10,7 @@ import {
 export interface SensorsState {
   devices: SensorDevice[];
   readings: SensorReading[];
+  latestReadings: SensorReading[];
   recentReadings: SensorReading[];
   realTimeBuffer: SensorReading[];
   alerts: SensorAlert[];
@@ -21,6 +22,7 @@ export interface SensorsState {
 const initialState: SensorsState = {
   devices: [],
   readings: [],
+  latestReadings: [],
   recentReadings: [],
   realTimeBuffer: [],
   alerts: [],
@@ -49,6 +51,17 @@ export const sensorsReducer = createReducer(
     readings,
   })),
   on(SensorsActions.loadReadingsFailure, (state, { error }) => ({
+    ...state,
+    loading: false,
+    error,
+  })),
+  on(SensorsActions.loadLatestReadings, (state) => ({ ...state, loading: true, error: null })),
+  on(SensorsActions.loadLatestReadingsSuccess, (state, { readings }) => ({
+    ...state,
+    loading: false,
+    latestReadings: readings,
+  })),
+  on(SensorsActions.loadLatestReadingsFailure, (state, { error }) => ({
     ...state,
     loading: false,
     error,

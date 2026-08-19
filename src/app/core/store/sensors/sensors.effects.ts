@@ -88,6 +88,24 @@ export class SensorsEffects {
     ),
   );
 
+  loadLatestReadings$ = createEffect(() =>
+    this.actions$.pipe(
+      ofType(SensorsActions.loadLatestReadings),
+      switchMap(({ projectId }) =>
+        from(this.sensorsService.getLatestReadings(projectId)).pipe(
+          map((readings) => SensorsActions.loadLatestReadingsSuccess({ readings })),
+          catchError((error) =>
+            of(
+              SensorsActions.loadLatestReadingsFailure({
+                error: error instanceof Error ? error.message : 'Failed to load sensor readings',
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
   receiveSensorReading$ = createEffect(() =>
     this.wsService.sensorReadings$.pipe(
       map((data) => SensorsActions.receiveSensorReading({ data })),
